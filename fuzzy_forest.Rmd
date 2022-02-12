@@ -1,0 +1,284 @@
+---
+title: "fuzzy"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(caret)
+library(ClustVarLV)
+```
+
+## R Markdown
+```{r}
+library(randomForest)
+#library(WGCNA)
+library(fuzzyforest)
+```
+```{r}
+train <- read.csv(file = "https://archive.ics.uci.edu/ml/machine-learning-databases/arcene/ARCENE/arcene_train.data", header = F, sep = " ", strip.white = T, blank.lines.skip = T, stringsAsFactors = F)
+y <- read.csv(file = "https://archive.ics.uci.edu/ml/machine-learning-databases/arcene/ARCENE/arcene_train.labels", header = F, sep = " ", strip.white = T, blank.lines.skip = T, stringsAsFactors = F, col.names = "class")
+train$class=y[1:100, 1]
+```
+
+## Validation
+
+```{r}
+validation <- read.csv(file = "https://archive.ics.uci.edu/ml/machine-learning-databases/arcene/ARCENE/arcene_valid.data", header = F, sep = " ", strip.white = T, blank.lines.skip = T, stringsAsFactors = F)
+y <- read.csv(file = "https://archive.ics.uci.edu/ml/machine-learning-databases/arcene/arcene_valid.labels", header = F, sep = " ", strip.white = T, blank.lines.skip = T, stringsAsFactors = F, col.names = "class")
+validation$class=y[,1]
+
+data=rbind(train, validation)
+data=data[, -10001]
+```
+
+## Random Forest
+
+```{r}
+X=data[, c(-10002 )]
+var_list=names(X)
+vars=c()
+j=1
+for (i in 1:length(var_list)) {
+  temp=as.numeric(unlist(X[var_list[i]]))
+    if (sd(temp)!=0) {
+      vars[length(vars)+1]=var_list[i]
+    
+  }
+  
+}
+```
+
+```{r}
+data$class=as.factor(data$class)
+RdomF=randomForest(class ~ ., data = data[, c(vars)], importance=TRUE)
+varImpPlot(RdomF)
+
+```
+
+## ERROR OOB INITIAL
+```{r}
+RdomF
+```
+
+
+
+
+```{r}
+varImpPlot(x = RdomF,sort =TRUE, n.var = 9050, type = 1)
+```
+
+```{r}
+rfe(x = data[, c(-10001,-10002 )], y = data[, 10002], sizes = c(10:100), rfeControl = rfeControl(functions =rfFuncs))
+```
+```{r}
+y=data$class
+
+```
+
+# Fuzzy Forest
+
+## Custering de variable
+
+```{r}
+X=apply(data[, vars], MARGIN = 2, FUN = as.numeric)
+```
+
+# distance entre variables
+
+```{r}
+str(X)
+```
+
+
+```{r}
+dist_cor=cor(X[, -9962])
+dist_cor=as.dist(dist_cor)
+View(dist_cor)
+```
+
+# Choix des variables
+
+
+```{r}
+length(vars)
+```
+```{r}
+View(X)
+dist_cor
+```
+
+
+```{r}
+#dist_cor=cor(X)
+dist_cor=as.dist(1-dist_cor)
+```
+
+
+```{r}
+#dist_cor=as.dist(dist_cor)
+cah_var_compl=hclust(dist_cor, method = "complete")
+plot(cah_var_compl)
+rect.hclust(cah_var_compl, k = 4)
+cah_var.comp.labels=cutree(cah_var_compl, k =4 )
+table(cah_var.comp.labels)
+```
+```{r}
+inerties=sort(x = cah_var_compl$height, decreasing = TRUE)
+barplot(inerties[1:100], col = "red")
+```
+
+```{r}
+data_mod=data[, vars]
+```
+
+
+# Application Fuzzy Forest CAH
+
+```{r}
+screen_step=screen_control(keep_fraction = 0.1)
+cah_comp_sel=ff(X = data_mod[, -9962], y = y, screen_params = screen_step, select_params = select_control(number_selected = 10), module_membership = cah_var.comp.labels)
+```
+
+
+```{r}
+dim(data[, vars])
+```
+
+
+
+
+
+
+
+```{r}
+cah_comp_sel$final_rf
+```
+## HAC WARD methods
+
+```{r}
+cah_var_ward=hclust(dist_cor, method = "ward.D2")
+plot(cah_var_ward)
+rect.hclust(cah_var_ward, k = 4)
+cah_var_ward.labels=cutree(cah_var_ward, k = 4)
+```
+
+```{r}
+screen_step=screen_control(keep_fraction = 0.1)
+cah_ward_sel=ff(X = data_mod[, -9962], y = y, screen_params = screen_step, select_params = select_control(number_selected = 10), module_membership = cah_var_ward.labels)
+```
+
+```{r}
+cah_comp_sel$final_rf
+```
+
+
+```{r}
+inerties=sort(cah_var_ward$height, decreasing = TRUE)
+barplot(inerties[1:100])
+```
+
+
+## Hierrarchical divisive clustering
+
+```{r}
+library(cluster)
+cdh=diana(dist_cor, diss = TRUE)
+```
+
+```{r}
+cdh_labels=cutree(cdh, k = 4)
+plot(cdh)
+```
+
+```{r}
+barplot(sort(cdh$height[1:100], decreasing = TRUE))
+```
+
+
+```{r}
+screen_step=screen_control(keep_fraction = 0.1)
+cdh_sel=ff(X = data_mod[, -9962], y = y, screen_params = screen_step, select_params = select_control(number_selected = 10), module_membership = cdh_labels)
+```
+
+
+```{r}
+cdh_sel$final_rf
+```
+
+
+```{r}
+X_scale=t(scale(X[vars]))
+inertie.expl=rep(0,times=10)
+for (k in 2:20){
+  clus=kmeans(X_scale,centers=k,nstart=5)  
+  inertie.expl[k] =clus$tot.withinss}
+
+```
+
+```{r}
+plot(inertie.expl[2:length(inertie.expl)])
+```
+## CLV methods
+
+
+```{r}
+clv=CLV(X = X[, -9962], method = 1)
+```
+
+```{r}
+plot(clv)
+```
+
+```{r}
+plot(clv, type="delta",cex=0.7)
+```
+
+```{r}
+clv_labels=get_partition(clv, K = 4)
+```
+
+## FUZZY 
+
+```{r}
+   screen_step=screen_control(keep_fraction = 0.1)
+clv_sel=ff(X = data_mod[, -9962], y = y, screen_params = screen_step, select_params = select_control(number_selected = 10), module_membership = clv_labels)
+```
+
+
+```{r}
+clv_sel$final_rf
+```
+
+# CLV Kmeans 
+
+```{r}
+clv.kmeans=CLV_kmeans(X = X[, -9962], method = 1, clust = 4)
+```
+
+#Fuzzy Forest clv_kmeans
+
+```{r}
+screen_step=screen_control(keep_fraction = 0.1)
+clv.kmeans_sel=ff(X = data_mod[, -9962], y = y, screen_params = screen_step, select_params = select_control(number_selected = 10), module_membership = clv.kmeans$clusters[2, ])
+```
+
+```{r}
+clv.kmeans_sel$final_rf
+```
+# Summary labels
+
+
+
+```{r}
+var_summary=data.frame(Variables=names(data_mod[, -9962]))
+var_summary$cah_comp=cah_var.comp.labels
+var_summary$cah_Ward=cah_var_ward.labels
+var_summary$cdh=cdh_labels
+View(var_summary)
+
+```
+
